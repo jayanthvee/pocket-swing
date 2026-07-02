@@ -1,0 +1,43 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Secrets (NEVER commit)
+.env
+.env.*
+!.env.example
+secrets/
+
+# Private product docs (keep OUT of the public repo)
+product-plan.md
+prd.md
+PRD.md
+*.prd.md
+docs/private/
+notes/
+*private*
+
+# Training data (copyrighted clips + proprietary corpus - NEVER push)
+trainingdata_pro/
+trainingdata*/
