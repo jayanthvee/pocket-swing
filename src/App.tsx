@@ -132,6 +132,12 @@ export default function App() {
           {metrics && (
             <div className="card">
               <h3 className="no-margin-top">Your numbers</h3>
+              {metrics.rotationConfidence === "low" && (
+                <p className="muted metric-label">
+                  Filmed down-the-line — turn numbers are approximate. Film
+                  face-on for accurate rotation.
+                </p>
+              )}
               <div className="metrics">
                 <div>
                   <span className="metric-value">{metrics.shoulderTurnMax}°</span>

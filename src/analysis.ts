@@ -33,6 +33,10 @@ export interface SwingPhases {
 }
 
 export interface SwingMetrics {
+  /** Detected camera view at address. */
+  view: "face-on" | "down-the-line";
+  /** Rotation metrics need depth; from a DTL view z-noise dominates. */
+  rotationConfidence: "high" | "low";
   /** Peak shoulder-line rotation vs address, degrees (about vertical axis). */
   shoulderTurnMax: number;
   /** Peak hip-line rotation vs address, degrees. */
@@ -74,45 +78,57 @@ function trunkTilt(lm: Point3[]): number {
   return deg(Math.atan2(shoulders.x - hips.x, hips.y - shoulders.y));
 }
 
+/** Median filter to suppress single-frame tracking glitches (motion blur). */
+function medianFilter(xs: number[], k = 5): number[] {
+  const half = Math.floor(k / 2);
+  return xs.map((_, i) => {
+    const w = xs.slice(Math.max(0, i - half), i + half + 1).sort((a, b) => a - b);
+    return w[Math.floor(w.length / 2)];
+  });
+}
+
 /**
- * Segment the swing using lead-wrist height (y decreases upward in world
- * space is NOT guaranteed; MediaPipe world y increases downward like image y,
- * so "highest" = smallest y).
+ * Segment the swing. MediaPipe world y increases downward, so "highest
+ * hands" = smallest y.
  *
- * Heuristics:  address = first low-motion frame; top = highest wrist point
- * after takeaway; impact = first frame after top where the wrist returns to
- * address height; finish = last frame.
+ * Anchor on IMPACT first: nothing moves the hands faster than the downswing,
+ * so the frame of peak downward wrist velocity is unambiguous — unlike wrist
+ * height, which peaks at BOTH the top and the finish (anchoring on the global
+ * height peak grabs the finish and mislabels everything). Then top = highest
+ * hands shortly before impact; address = last frame before top with hands
+ * still low. Validated against pro reference footage.
  */
 export function detectPhases(samples: FrameSample[]): SwingPhases {
   const n = samples.length;
-  const wristY = samples.map(
-    (s) => Math.min(s.lm[L_WRIST].y, s.lm[R_WRIST].y) // lead-hand agnostic
+  const wristY = medianFilter(
+    samples.map((s) => Math.min(s.lm[L_WRIST].y, s.lm[R_WRIST].y))
   );
 
-  // Address: the frame before sustained wrist movement starts.
-  let address = 0;
-  for (let i = 1; i < n; i++) {
-    if (Math.abs(wristY[i] - wristY[0]) > 0.05) {
-      address = Math.max(0, i - 2);
-      break;
+  // Impact: peak downward wrist velocity.
+  let impact = 1;
+  for (let i = 1; i < n - 1; i++) {
+    if (wristY[i + 1] - wristY[i] > wristY[impact] - wristY[impact - 1]) {
+      impact = i + 1;
     }
   }
 
-  // Top: highest wrist position after address.
-  let top = address;
-  for (let i = address + 1; i < n; i++) {
+  // Top: highest hands in the ~1s window before impact.
+  let top = Math.max(0, impact - 35);
+  for (let i = top + 1; i < impact; i++) {
     if (wristY[i] < wristY[top]) top = i;
   }
 
-  // Impact: wrist back down to address height after the top.
-  let impact = top;
-  for (let i = top + 1; i < n; i++) {
-    if (wristY[i] >= wristY[address] - 0.02) {
-      impact = i;
+  // Address: hands back near their pre-swing low baseline.
+  const lo = Math.max(0, top - 90);
+  let baseline = -Infinity;
+  for (let i = lo; i <= top; i++) baseline = Math.max(baseline, wristY[i]);
+  let address = lo;
+  for (let i = top; i >= lo; i--) {
+    if (wristY[i] >= baseline - 0.05) {
+      address = i;
       break;
     }
   }
-  if (impact === top) impact = Math.min(n - 1, top + 1);
 
   return { address, top, impact, finish: n - 1 };
 }
@@ -138,9 +154,11 @@ export function computeMetrics(samples: FrameSample[]): SwingMetrics | null {
   let tiltMin = Infinity;
   let tiltMax = -Infinity;
 
-  // Scan the backswing (address → top) for rotation peaks; whole swing for
-  // head sway and trunk tilt.
-  for (let i = phases.address; i < samples.length; i++) {
+  // Scan the backswing (address → top) for rotation peaks; address → just
+  // past impact for head sway and trunk tilt (not to the end of the clip —
+  // post-swing movement would poison those numbers).
+  const end = Math.min(phases.impact + 5, samples.length - 1);
+  for (let i = phases.address; i <= end; i++) {
     const lm = at(i);
     if (i <= phases.top) {
       const st = Math.abs(
@@ -167,7 +185,17 @@ export function computeMetrics(samples: FrameSample[]): SwingMetrics | null {
     )
   );
 
+  // Face-on shows the shoulder line across the image (x); DTL points it into
+  // the scene (z).
+  const view =
+    Math.abs(addressLm[L_SHOULDER].x - addressLm[R_SHOULDER].x) >=
+    Math.abs(addressLm[L_SHOULDER].z - addressLm[R_SHOULDER].z)
+      ? ("face-on" as const)
+      : ("down-the-line" as const);
+
   return {
+    view,
+    rotationConfidence: view === "face-on" ? "high" : "low",
     shoulderTurnMax: Math.round(shoulderTurnMax),
     hipTurnMax: Math.round(hipTurnMax),
     xFactorAtTop: Math.round(xFactorAtTop),
