@@ -1,6 +1,6 @@
 # pocket-swing
 
-A small mobile-first web app.
+Golf Swing Analysis App 
 
 ## Develop
 
